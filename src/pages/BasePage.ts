@@ -76,6 +76,9 @@ export abstract class BasePage {
   async logout(): Promise<void> {
     await this.logoutLink.click();
     await this.page.waitForURL(/\/login/);
+    // Returning to /login can come up blank under load; wait for the login form
+    // (reloading if needed) so callers can immediately assert on the page.
+    await this.settleOn('form[action="/login"]');
   }
 
   /**

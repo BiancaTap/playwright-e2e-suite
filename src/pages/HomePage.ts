@@ -36,15 +36,18 @@ export class HomePage extends BasePage {
   async navigateToProducts(): Promise<void> {
     await this.productsLink.click();
     await this.page.waitForURL(/\/products/);
+    await this.settleOn('h2:has-text("All Products")');
   }
 
   async navigateToCart(): Promise<void> {
     await this.cartLink.click();
     await this.page.waitForURL(/\/view_cart/);
+    await this.settleOn('#cart_items, p:has-text("Cart is empty")');
   }
 
   async navigateToContactUs(): Promise<void> {
     await this.contactUsLink.click();
     await this.page.waitForURL(/\/contact_us/);
+    await this.settleOn('h2:has-text("Get In Touch")');
   }
 }

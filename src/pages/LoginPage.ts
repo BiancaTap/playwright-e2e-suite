@@ -57,6 +57,17 @@ export class LoginPage extends BasePage {
     await this.loginEmail.fill(creds.email);
     await this.loginPassword.fill(creds.password);
     await this.loginSubmit.click();
+    // Wait for a settled outcome — either the logged-in badge (success, on the
+    // home page) or the inline error (failure, still on /login) — so callers
+    // don't assert against a still-blank page on a slow live-site response.
+    // Both outcomes are valid; we don't assert which, just that one rendered.
+    await this.page
+      .locator('a:has-text("Logged in as"), form[action="/login"] p:has-text("incorrect")')
+      .first()
+      .waitFor({ state: 'visible', timeout: 15_000 })
+      .catch(() => {
+        /* leave the assertion to the caller; a true blank still fails there */
+      });
   }
 
   /**
@@ -71,28 +82,35 @@ export class LoginPage extends BasePage {
   async startSignup(user: Pick<UserSignup, 'name' | 'email'>): Promise<void> {
     const attempts = 3;
     for (let attempt = 1; attempt <= attempts; attempt++) {
-      await this.signupName.fill(user.name);
-      await this.signupEmail.fill(user.email);
-      await this.signupSubmit.click();
-      await this.page.waitForURL(/\/signup/);
+      // The whole submit+navigation is guarded: under load the live site can
+      // time out the navigation entirely or serve a browser error page, in
+      // which case waitForURL throws. Either way we retry from a fresh /login.
+      try {
+        await this.signupName.fill(user.name);
+        await this.signupEmail.fill(user.email);
+        await this.signupSubmit.click();
+        await this.page.waitForURL(/\/signup/, { timeout: 15_000 });
 
-      // Settled = either the account-info form rendered (happy path) or the
-      // duplicate-email error rendered (negative path). Only a blank page —
-      // neither showing — counts as a transient worth retrying.
-      const settled = await this.page
-        .locator(
-          '#id_gender1, h2:has-text("Enter Account Information"), p:has-text("Email Address already exist!")',
-        )
-        .first()
-        .waitFor({ state: 'visible', timeout: 8_000 })
-        .then(() => true)
-        .catch(() => false);
-      if (settled) return;
+        // Settled = either the account-info form rendered (happy path) or the
+        // duplicate-email error rendered (negative path). Only a blank page —
+        // neither showing — counts as a transient worth retrying.
+        const settled = await this.page
+          .locator(
+            '#id_gender1, h2:has-text("Enter Account Information"), p:has-text("Email Address already exist!")',
+          )
+          .first()
+          .waitFor({ state: 'visible', timeout: 8_000 })
+          .then(() => true)
+          .catch(() => false);
+        if (settled) return;
+      } catch {
+        // navigation timed out / site served an error page — fall through to retry
+      }
 
       if (attempt === attempts) {
         throw new Error(
           `/signup did not render after ${attempts} attempts ` +
-            `(live site served a blank/interstitial page each time)`,
+            `(live site repeatedly served a blank/error page)`,
         );
       }
       await this.goto(); // back to a freshly-loaded /login, then retry
