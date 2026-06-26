@@ -39,18 +39,26 @@ interface Flows {
 }
 
 /**
- * Third-party consent / ad-funding scripts that render a full-screen overlay
- * (Google Funding Choices' `.fc-consent-root`) on top of the page and steal
- * pointer events, causing every click to time out. We block them at the
- * network layer so the banner never renders. This is test-only and does not
- * change the behaviour of the app under test.
+ * Third-party consent / ad / analytics traffic that interferes with the app
+ * under test. Two distinct failure modes, both blocked at the network layer:
+ *
+ *  1. Consent overlay — Google Funding Choices' `.fc-consent-root` renders a
+ *     full-screen banner that steals pointer events, timing out every click.
+ *  2. Ad interstitial — Google AdSense serves a full-page "vignette" ad on
+ *     navigation (via `googlesyndication.com` / `googleads.g.doubleclick.net`).
+ *     It intermittently hijacks a navigation and leaves the destination page
+ *     blank, so elements like the account-created heading never render. This is
+ *     the classic source of flaky failures against automationexercise.com.
+ *
+ * Blocking these is test-only and does not change the app's own behaviour — none
+ * of the patterns match the site's first-party origin or its `/api` endpoints.
  */
-const CONSENT_SCRIPT_BLOCKLIST =
-  /fundingchoicesmessages\.google\.com|fundingchoices|googletagservices|consensu\.org|cookielaw\.org/;
+const THIRD_PARTY_BLOCKLIST =
+  /fundingchoicesmessages\.google\.com|fundingchoices|googletagservices|consensu\.org|cookielaw\.org|googlesyndication\.com|googleads\.g\.doubleclick\.net|doubleclick\.net|adservice\.google\.|adtrafficquality\.google|googletagmanager\.com|google-analytics\.com/;
 
 export const test = base.extend<Pages & Data & Flows>({
   context: async ({ context }, use) => {
-    await context.route(CONSENT_SCRIPT_BLOCKLIST, (route) => route.abort());
+    await context.route(THIRD_PARTY_BLOCKLIST, (route) => route.abort());
     await use(context);
   },
 

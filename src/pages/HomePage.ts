@@ -28,6 +28,9 @@ export class HomePage extends BasePage {
   async navigateToSignupLogin(): Promise<void> {
     await this.signupLoginLink.click();
     await this.page.waitForURL(/\/login/);
+    // /login hosts both the login and signup-start forms; wait for it to render
+    // (reloading if the live site served a blank page) before callers interact.
+    await this.settleOn('form[action="/login"]');
   }
 
   async navigateToProducts(): Promise<void> {

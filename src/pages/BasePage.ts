@@ -30,6 +30,29 @@ export abstract class BasePage {
     await expect(this.page.locator(this.readySelector).first()).toBeVisible({ timeout: 15_000 });
   }
 
+  /**
+   * After a click-driven navigation, wait for the destination's ready marker.
+   * The live target intermittently serves a blank/slow page on navigation, so
+   * if the marker doesn't appear we reload (a safe GET) and wait again. Mirrors
+   * the retry in `goto()` for navigations that arrive via a click rather than a
+   * direct address-bar load. A genuine defect still fails every attempt.
+   */
+  protected async settleOn(readySelector: string, attempts = 3): Promise<void> {
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+      const ready = await this.page
+        .locator(readySelector)
+        .first()
+        .waitFor({ state: 'visible', timeout: 8_000 })
+        .then(() => true)
+        .catch(() => false);
+      if (ready) return;
+      if (attempt === attempts) {
+        throw new Error(`Page did not render "${readySelector}" after ${attempts} attempt(s)`);
+      }
+      await this.page.reload({ waitUntil: 'domcontentloaded' }).catch(() => {});
+    }
+  }
+
   get header(): Locator {
     return this.page.locator('#header');
   }

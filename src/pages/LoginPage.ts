@@ -59,10 +59,43 @@ export class LoginPage extends BasePage {
     await this.loginSubmit.click();
   }
 
+  /**
+   * Submits the name+email signup-start form. Normally this lands on the full
+   * /signup account-details form, but with an already-registered email it
+   * re-renders with a duplicate-account error instead — both are valid settled
+   * outcomes. The live site also intermittently serves a slow/empty response
+   * under load, leaving /signup blank so neither appears; we treat *that* as a
+   * transient and retry from a freshly-loaded /login. A genuine defect still
+   * fails every attempt rather than being masked.
+   */
   async startSignup(user: Pick<UserSignup, 'name' | 'email'>): Promise<void> {
-    await this.signupName.fill(user.name);
-    await this.signupEmail.fill(user.email);
-    await this.signupSubmit.click();
-    await this.page.waitForURL(/\/signup/);
+    const attempts = 3;
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+      await this.signupName.fill(user.name);
+      await this.signupEmail.fill(user.email);
+      await this.signupSubmit.click();
+      await this.page.waitForURL(/\/signup/);
+
+      // Settled = either the account-info form rendered (happy path) or the
+      // duplicate-email error rendered (negative path). Only a blank page —
+      // neither showing — counts as a transient worth retrying.
+      const settled = await this.page
+        .locator(
+          '#id_gender1, h2:has-text("Enter Account Information"), p:has-text("Email Address already exist!")',
+        )
+        .first()
+        .waitFor({ state: 'visible', timeout: 8_000 })
+        .then(() => true)
+        .catch(() => false);
+      if (settled) return;
+
+      if (attempt === attempts) {
+        throw new Error(
+          `/signup did not render after ${attempts} attempts ` +
+            `(live site served a blank/interstitial page each time)`,
+        );
+      }
+      await this.goto(); // back to a freshly-loaded /login, then retry
+    }
   }
 }
