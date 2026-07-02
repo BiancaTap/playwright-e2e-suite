@@ -14,6 +14,12 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  # Single source of truth for the live target — used both as Playwright's
+  # BASE_URL and for the reachability checks below.
+  CI: 'true'
+  BASE_URL: https://automationexercise.com
+
 jobs:
   lint-and-typecheck:
     name: Lint + Typecheck
@@ -59,11 +65,40 @@ jobs:
       - name: Install Playwright browsers
         run: npx playwright install --with-deps ${{ matrix.project }}
 
+      # The suite runs against a live third-party site. If that site is down at
+      # the start, skip the run rather than spending 20 minutes timing out — an
+      # outage of someone else's server is not a failure of this test code.
+      - name: Preflight — is the target reachable?
+        id: preflight
+        run: |
+          for attempt in 1 2 3; do
+            if curl -sSf -m 15 -o /dev/null "$BASE_URL/"; then
+              echo "reachable=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "Attempt $attempt: $BASE_URL not reachable yet…"
+            sleep 5
+          done
+          echo "reachable=false" >> "$GITHUB_OUTPUT"
+          echo "::warning::$BASE_URL is unreachable — skipping the run (treated as a target outage, not a test failure)."
+
       - name: Run Playwright tests
-        env:
-          CI: 'true'
-          BASE_URL: https://automationexercise.com
+        id: tests
+        if: steps.preflight.outputs.reachable == 'true'
+        continue-on-error: true
         run: npx playwright test --project=${{ matrix.project }}
+
+      # The suite already retries transient blips (retries: 2). If it still
+      # failed, decide *why*: a real regression fails while the target is
+      # healthy; if the target has since gone unreachable, treat it as an outage.
+      - name: Classify outcome (target outage vs real failure)
+        if: steps.tests.outcome == 'failure'
+        run: |
+          if curl -sSf -m 10 --retry 2 --retry-delay 3 -o /dev/null "$BASE_URL/"; then
+            echo "::error::Tests failed while $BASE_URL was reachable — this is a real failure."
+            exit 1
+          fi
+          echo "::warning::Tests failed but $BASE_URL is unreachable — treating as a target outage, not a code failure."
 
       - name: Upload HTML report
         if: ${{ !cancelled() }}
@@ -82,7 +117,7 @@ jobs:
           retention-days: 14
 
       - name: Upload traces on failure
-        if: failure()
+        if: steps.tests.outcome == 'failure'
         uses: actions/upload-artifact@v4
         with:
           name: traces-${{ matrix.project }}
@@ -104,7 +139,31 @@ jobs:
 
       - run: npm ci
       - run: npx playwright install --with-deps chromium
+
+      - name: Preflight — is the target reachable?
+        id: preflight
+        run: |
+          for attempt in 1 2 3; do
+            if curl -sSf -m 15 -o /dev/null "$BASE_URL/"; then
+              echo "reachable=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "reachable=false" >> "$GITHUB_OUTPUT"
+          echo "::warning::$BASE_URL is unreachable — skipping the smoke gate (target outage, not a test failure)."
+
       - name: Run smoke tests
-        env:
-          CI: 'true'
+        id: tests
+        if: steps.preflight.outputs.reachable == 'true'
+        continue-on-error: true
         run: npx playwright test --project=chromium --grep @smoke
+
+      - name: Classify outcome (target outage vs real failure)
+        if: steps.tests.outcome == 'failure'
+        run: |
+          if curl -sSf -m 10 --retry 2 --retry-delay 3 -o /dev/null "$BASE_URL/"; then
+            echo "::error::Smoke tests failed while $BASE_URL was reachable — real failure."
+            exit 1
+          fi
+          echo "::warning::Smoke tests failed but $BASE_URL is unreachable — treating as a target outage."
